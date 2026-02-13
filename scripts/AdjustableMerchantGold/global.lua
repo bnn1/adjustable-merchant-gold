@@ -1,49 +1,17 @@
 local types = require('openmw.types')
-local storage = require('openmw.storage')
-local async = require('openmw.async')
 local world = require('openmw.world')
-local I = require('openmw.interfaces')
 
------------------------------------------------------------
--- Settings registration
------------------------------------------------------------
+local DEFAULT_MULTIPLIER = 5
+local multiplier = DEFAULT_MULTIPLIER
 
-I.Settings.registerPage {
-    key = 'AdjustableMerchantGold',
-    l10n = 'AdjustableMerchantGold',
-    name = 'PageName',
-    description = 'PageDescription',
-}
-
-I.Settings.registerGroup {
-    key = 'SettingsGlobalAdjustableMerchantGold',
-    page = 'AdjustableMerchantGold',
-    l10n = 'AdjustableMerchantGold',
-    name = 'GroupName',
-    description = 'GroupDescription',
-    permanentStorage = true,
-    settings = {
-        {
-            key = 'GoldMultiplier',
-            renderer = 'number',
-            name = 'GoldMultiplier_name',
-            description = 'GoldMultiplier_description',
-            default = 5,
-            argument = {
-                min = 0.1,
-                max = 100,
-            },
-        },
-    },
-}
-
-local settings = storage.globalSection('SettingsGlobalAdjustableMerchantGold')
+-- Per-actor tracking: actorId -> bonus gold we added.
+-- Lets us do delta-based adjustments without overwriting trade changes.
+local bonuses = {}
 
 -----------------------------------------------------------
 -- Core logic
 -----------------------------------------------------------
 
---- Get the base barter gold from the record for an NPC or Creature.
 local function getBaseGold(actor)
     if types.NPC.objectIsInstance(actor) then
         return types.NPC.record(actor).baseGold
@@ -53,41 +21,85 @@ local function getBaseGold(actor)
     return 0
 end
 
---- Apply the configured multiplier to a single actor's barter gold.
-local function applyMultiplier(actor)
+--- Calculate the bonus gold to add on top of baseGold.
+local function calcBonus(baseGold)
+    return math.floor(baseGold * multiplier) - baseGold
+end
+
+--- Apply the multiplier bonus to an actor for the first time, or after
+--- the engine resets their gold (24h restock).
+local function applyToActor(actor)
     local baseGold = getBaseGold(actor)
-    if baseGold and baseGold > 0 then
-        local multiplier = settings:get('GoldMultiplier') or 1
-        local newGold = math.floor(baseGold * multiplier)
-        types.Actor.setBarterGold(actor, newGold)
+    if baseGold <= 0 then return end
+
+    local id = actor.id
+    local currentGold = types.Actor.getBarterGold(actor)
+    local bonus = calcBonus(baseGold)
+
+    if bonuses[id] == nil then
+        -- First time seeing this merchant — apply the bonus.
+        types.Actor.setBarterGold(actor, currentGold + bonus)
+        bonuses[id] = bonus
+    elseif currentGold == baseGold and bonuses[id] ~= 0 then
+        -- Gold is back to baseGold but we had added a non-zero bonus before.
+        -- The engine restocked (24h reset). Re-apply.
+        types.Actor.setBarterGold(actor, baseGold + bonus)
+        bonuses[id] = bonus
     end
 end
 
---- Re-apply the multiplier to every currently active actor (used when
---- the player changes the setting mid-game).
-local function reapplyAll()
+--- Adjust all active merchants when the multiplier setting changes.
+--- Uses delta so trading gains/losses are preserved.
+local function onMultiplierChanged()
     for _, actor in ipairs(world.activeActors) do
-        applyMultiplier(actor)
+        local baseGold = getBaseGold(actor)
+        if baseGold > 0 then
+            local id = actor.id
+            local oldBonus = bonuses[id] or 0
+            local newBonus = calcBonus(baseGold)
+            local delta = newBonus - oldBonus
+            if delta ~= 0 then
+                local currentGold = types.Actor.getBarterGold(actor)
+                types.Actor.setBarterGold(actor, math.max(0, currentGold + delta))
+            end
+            bonuses[id] = newBonus
+        end
     end
 end
-
--- Subscribe to setting changes so the effect is applied immediately.
-settings:subscribe(async:callback(function(_, key)
-    if key == 'GoldMultiplier' or key == nil then
-        reapplyAll()
-    end
-end))
 
 -----------------------------------------------------------
--- Engine handlers
+-- Engine handlers & events
 -----------------------------------------------------------
 
 return {
     engineHandlers = {
-        -- Every time an actor becomes active (player enters a cell,
-        -- game loads, etc.) we set its barter gold to the multiplied value.
         onActorActive = function(actor)
-            applyMultiplier(actor)
+            applyToActor(actor)
+        end,
+        -- Check every frame for engine restocks (happens during barter UI,
+        -- so no event-based hook can catch it reliably). With ~1-5 merchants
+        -- per cell this is just a handful of number comparisons per frame.
+        onUpdate = function(dt)
+            for _, actor in ipairs(world.activeActors) do
+                applyToActor(actor)
+            end
+        end,
+        onSave = function()
+            return { multiplier = multiplier, bonuses = bonuses }
+        end,
+        onLoad = function(data)
+            if data then
+                multiplier = data.multiplier or DEFAULT_MULTIPLIER
+                bonuses = data.bonuses or {}
+            end
+        end,
+    },
+    eventHandlers = {
+        AdjustableMerchantGold_SetMultiplier = function(data)
+            if data.multiplier and data.multiplier ~= multiplier then
+                multiplier = data.multiplier
+                onMultiplierChanged()
+            end
         end,
     },
 }

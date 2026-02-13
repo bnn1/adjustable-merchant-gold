@@ -1,1 +1,2 @@
 GLOBAL: scripts/AdjustableMerchantGold/global.lua
+PLAYER: scripts/AdjustableMerchantGold/player.lua
