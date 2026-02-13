@@ -13,7 +13,7 @@ A configurable OpenMW Lua mod that multiplies merchant gold amounts for more con
 
 ## Requirements
 
-- OpenMW 0.48 or later with Lua scripting support
+- OpenMW Dev Build
 
 ## Installation
 
