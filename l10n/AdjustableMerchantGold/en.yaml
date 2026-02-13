@@ -1,0 +1,6 @@
+PageName: "Adjustable Merchant Gold"
+PageDescription: "Configure how much gold merchants have available for bartering"
+GroupName: "Gold Settings"
+GroupDescription: "Settings for merchant gold multiplier"
+GoldMultiplier_name: "Gold Multiplier"
+GoldMultiplier_description: "Multiply all merchant base gold by this amount. For example, 2 means merchants have twice their normal gold, 10 means ten times."
