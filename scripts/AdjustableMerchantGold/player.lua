@@ -36,4 +36,18 @@ return {
             syncMultiplier()
         end,
     },
+    eventHandlers = {
+        UiModeChanged = function(data)
+            if data.newMode == 'Dialogue' and data.arg then
+                -- Player started talking to an NPC; tell global to watch them
+                -- so restocks are caught immediately by per-frame polling.
+                core.sendGlobalEvent('AdjustableMerchantGold_WatchMerchant', {
+                    actor = data.arg,
+                })
+            elseif data.newMode == nil then
+                -- All UI closed; stop watching.
+                core.sendGlobalEvent('AdjustableMerchantGold_UnwatchMerchant')
+            end
+        end,
+    },
 }

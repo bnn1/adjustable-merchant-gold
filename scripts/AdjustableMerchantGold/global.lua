@@ -8,6 +8,12 @@ local multiplier = DEFAULT_MULTIPLIER
 -- Lets us do delta-based adjustments without overwriting trade changes.
 local bonuses = {}
 
+-- The single merchant the player is currently interacting with (if any).
+-- Only this actor is polled per frame, avoiding the cost of iterating all
+-- active actors while still catching engine restocks before the barter UI
+-- renders the stale value.
+local watchedMerchant = nil
+
 -----------------------------------------------------------
 -- Core logic
 -----------------------------------------------------------
@@ -35,7 +41,6 @@ local function applyToActor(actor)
     local id = actor.id
     local currentGold = types.Actor.getBarterGold(actor)
     local bonus = calcBonus(baseGold)
-
     if bonuses[id] == nil then
         -- First time seeing this merchant — apply the bonus.
         types.Actor.setBarterGold(actor, currentGold + bonus)
@@ -76,12 +81,12 @@ return {
         onActorActive = function(actor)
             applyToActor(actor)
         end,
-        -- Check every frame for engine restocks (happens during barter UI,
-        -- so no event-based hook can catch it reliably). With ~1-5 merchants
-        -- per cell this is just a handful of number comparisons per frame.
-        onUpdate = function(dt)
-            for _, actor in ipairs(world.activeActors) do
-                applyToActor(actor)
+        -- Only poll the single merchant the player is talking to.
+        -- Catches engine restocks in the same frame, before the barter
+        -- UI renders the stale baseGold value.
+        onUpdate = function()
+            if watchedMerchant then
+                applyToActor(watchedMerchant)
             end
         end,
         onSave = function()
@@ -100,6 +105,14 @@ return {
                 multiplier = data.multiplier
                 onMultiplierChanged()
             end
+        end,
+        AdjustableMerchantGold_WatchMerchant = function(data)
+            if data.actor then
+                watchedMerchant = data.actor
+            end
+        end,
+        AdjustableMerchantGold_UnwatchMerchant = function()
+            watchedMerchant = nil
         end,
     },
 }
